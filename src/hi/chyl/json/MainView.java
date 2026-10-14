@@ -26,14 +26,13 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowListener;
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -44,7 +43,12 @@ import javax.swing.ActionMap;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
+import javax.swing.JFileChooser;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
 import javax.swing.event.ListDataEvent;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import org.jdesktop.application.SingleFrameApplication;
 import org.jdesktop.application.FrameView;
 import javax.swing.JDialog;
@@ -101,6 +105,28 @@ public class MainView extends FrameView {
     private char dot = 30;
     private int curPos = 0;
     private ResourceMap resourceMap;
+    private JComboBox<String> encodingSelector;
+    private JLabel encodingOriginLabel;
+    private JButton reloadEncodingButton;
+    private boolean updatingEncodingDisplay;
+
+    static final class FileState {
+        Path path;
+        Charset charset = TextFileIO.UTF8;
+        boolean automatic;
+        boolean manual;
+        boolean bom;
+        String baselineText = "";
+    }
+
+    static FileState fileState(JTextArea textArea) {
+        FileState state = (FileState) textArea.getClientProperty("hijson.fileState");
+        if (state == null) {
+            state = new FileState();
+            textArea.putClientProperty("hijson.fileState", state);
+        }
+        return state;
+    }
     
     public MainView(SingleFrameApplication app) {
         super(app);
@@ -117,6 +143,67 @@ public class MainView extends FrameView {
         setMenuBar(createMenuBar());
         initTabbedContainer();
         setComponent(tabbedContainer);
+        setStatusBar(createEncodingBar());
+        updateEncodingDisplay();
+    }
+
+    private JPanel createEncodingBar() {
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        bar.add(new JLabel("当前编码："));
+        encodingSelector = new JComboBox<>(new String[] {"UTF-8", "GBK"});
+        encodingSelector.setToolTipText("更改保存编码，不改变当前文本。纠正乱码时请点击“按此编码重新读取”。");
+        encodingSelector.addActionListener(e -> {
+            if (updatingEncodingDisplay) return;
+            JTextArea textArea = getTextArea();
+            if (textArea == null) return;
+            FileState state = fileState(textArea);
+            state.charset = Charset.forName((String) encodingSelector.getSelectedItem());
+            state.automatic = false;
+            state.manual = true;
+            updateEncodingDisplay();
+        });
+        bar.add(encodingSelector);
+        encodingOriginLabel = new JLabel();
+        bar.add(encodingOriginLabel);
+        reloadEncodingButton = new JButton("按此编码重新读取");
+        reloadEncodingButton.addActionListener(e -> reloadWithSelectedEncoding());
+        bar.add(reloadEncodingButton);
+        return bar;
+    }
+
+    private void updateEncodingDisplay() {
+        if (encodingSelector == null) return;
+        updatingEncodingDisplay = true;
+        try {
+            JTextArea textArea = getTextArea();
+            encodingSelector.setEnabled(textArea != null);
+            reloadEncodingButton.setEnabled(textArea != null && fileState(textArea).path != null);
+            if (textArea == null) {
+                encodingOriginLabel.setText("（无标签）");
+                return;
+            }
+            FileState state = fileState(textArea);
+            encodingSelector.setSelectedItem(state.charset.name());
+            String origin = state.automatic ? "自动识别" : state.manual ? "手动选择" : "默认";
+            encodingOriginLabel.setText("（" + origin + "）" + (state.bom && state.charset.equals(TextFileIO.UTF8) ? " · BOM" : ""));
+        } finally {
+            updatingEncodingDisplay = false;
+        }
+    }
+
+    private void reloadWithSelectedEncoding() {
+        JTextArea textArea = getTextArea();
+        if (textArea == null) return;
+        FileState state = fileState(textArea);
+        if (state.path == null) return;
+        if (!textArea.getText().equals(state.baselineText)
+                && JOptionPane.showConfirmDialog(getFrame(), "重新读取将丢弃当前标签中的编辑内容，是否继续？",
+                    "重新读取文件", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
+        try {
+            loadFileIntoEditor(textArea, state.path, state.charset);
+        } catch (IOException | IllegalArgumentException ex) {
+            showMessageDialog("读取失败", state.path + "\n无法按 " + state.charset.name() + " 读取文件：" + ex.getMessage());
+        }
     }
 
     private JToolBar createToolBar(){
@@ -365,8 +452,10 @@ public class MainView extends FrameView {
         TabData tabData = newTabData("Welcome!","This is a Tab!",null);
 	tabDataModel = new DefaultTabDataModel(new TabData[] { tabData });
 	tabbedContainer = new TabbedContainer(tabDataModel,TabbedContainer.TYPE_EDITOR);
+        TabTitleColors.install(tabbedContainer);
         tabbedContainer.getSelectionModel().setSelectedIndex(0);
         tabbedContainer.setShowCloseButton(true);
+        tabbedContainer.getSelectionModel().addChangeListener(e -> updateEncodingDisplay());
         tabDataModel.addComplexListDataListener(new ComplexListDataListener() {
             public void indicesAdded(ComplexListDataEvent clde) {}
             public void indicesRemoved(ComplexListDataEvent clde) {}
@@ -383,6 +472,7 @@ public class MainView extends FrameView {
                          System.out.println("Remove HashCode: "+ tree.hashCode() + ". Close Tab: " + tbArr[0].getText() + " !");
                      }
                 }
+                updateEncodingDisplay();
             }
             public void contentsChanged(ListDataEvent e) {}
         });
@@ -460,7 +550,8 @@ public class MainView extends FrameView {
 ////      textArea.getDocument().addUndoableEditListener(undoMg);
 //        textArea.addMouseListener(new TextAreaMouseListener());
         RSyntaxTextArea textArea = new RSyntaxTextArea();
-        textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVASCRIPT);
+        fileState(textArea);
+        textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JSON);
         textArea.setCodeFoldingEnabled(true);
         textArea.setAntiAliasingEnabled(true);
         textArea.setAutoscrolls(true);
@@ -468,7 +559,8 @@ public class MainView extends FrameView {
         SyntaxScheme scheme = textArea.getSyntaxScheme();
 //        scheme.getStyle(Token.COMMENT_KEYWORD).foreground = Color.red;
 //      scheme.getStyle(Token.DATA_TYPE).foreground = Color.blue;
-        scheme.getStyle(Token.LITERAL_STRING_DOUBLE_QUOTE).foreground = Color.BLUE;
+        scheme.getStyle(Token.VARIABLE).foreground = Color.BLUE;
+        scheme.getStyle(Token.LITERAL_STRING_DOUBLE_QUOTE).foreground = new Color(0, 128, 0);
         scheme.getStyle(Token.LITERAL_NUMBER_DECIMAL_INT).foreground = new Color(164, 0, 0);
         scheme.getStyle(Token.LITERAL_NUMBER_FLOAT).foreground = new Color(164, 0, 0);
         scheme.getStyle(Token.LITERAL_BOOLEAN).foreground = Color.RED;
@@ -556,7 +648,7 @@ public class MainView extends FrameView {
 
     private JTextArea getTextArea(){
         int selIndex = getTabIndex();
-        if(selIndex >= 0){
+        if(selIndex >= 0 && selIndex < tabDataModel.size()){
             TabData selTabData = tabDataModel.getTab(selIndex);
             JSplitPane selSplitPane = (JSplitPane)selTabData.getComponent();
             JScrollPane sp = (JScrollPane)selSplitPane.getLeftComponent();
@@ -1323,32 +1415,58 @@ public class MainView extends FrameView {
 
     private void openFileAction(JTextArea textArea) {
         String title = resourceMap.getString("openDlg.text");
-        java.awt.FileDialog openDlg = new java.awt.FileDialog(getFrame(), title, java.awt.FileDialog.LOAD);
-        openDlg.setVisible(true);
-        File file = new File(openDlg.getDirectory(),openDlg.getFile()); //fc.getSelectedFile();
-        if(file==null||file.getPath().length()==0) return;
-        BufferedReader reader = null;
-        StringBuilder sb = new StringBuilder();
-        try {
-            InputStreamReader isr = new InputStreamReader(new FileInputStream(file), "GBK");
-            reader = new BufferedReader(isr);
-            String temp = null;
-            while ((temp = reader.readLine()) != null) {
-                sb.append(temp);
-            }
-            reader.close();
-        } catch (IOException e) {
-
-        } finally {
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (IOException e1) {
-                }
-            }
+        JFileChooser openDlg = new JFileChooser();
+        openDlg.setDialogTitle(title);
+        openDlg.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        openDlg.addChoosableFileFilter(new FileNameExtensionFilter("JSON 文件 (*.json)", "json"));
+        openDlg.addChoosableFileFilter(new FileNameExtensionFilter("文本文件 (*.txt)", "txt"));
+        openDlg.setFileFilter(new FileNameExtensionFilter("JSON 和文本文件 (*.json, *.txt)", "json", "txt"));
+        FileState state = textArea == null ? null : fileState(textArea);
+        if (state != null && state.path != null && Files.isDirectory(state.path.toAbsolutePath().getParent())) {
+            openDlg.setCurrentDirectory(state.path.toAbsolutePath().getParent().toFile());
         }
-        textArea.setText(sb.toString());
+        Path path = null;
+        try {
+            if (openDlg.showOpenDialog(getFrame()) != JFileChooser.APPROVE_OPTION) return;
+            if (openDlg.getSelectedFile() == null) return;
+            path = openDlg.getSelectedFile().toPath().toAbsolutePath().normalize();
+            openFileInTab(path);
+        } catch (IOException | IllegalArgumentException ex) {
+            showMessageDialog("打开文件失败", (path == null ? "" : path + "\n") + ex.getMessage());
+        }
+    }
+
+    private void openFileInTab(Path path) throws IOException {
+        // Decode before choosing a tab, so read failures cannot create or rename tabs.
+        TextFileIO.Decoded decoded = TextFileIO.read(path, null);
+        JTextArea textArea = getTextArea();
+        String fileName = path.getFileName().toString();
+        if (textArea == null || fileState(textArea).path != null || !textArea.getText().isBlank()) {
+            addTab(fileName, true);
+            textArea = getTextArea();
+        } else {
+            tabDataModel.setText(getTabIndex(), fileName);
+        }
+        displayDecodedFile(textArea, path, decoded, true);
+    }
+
+    private void loadFileIntoEditor(JTextArea textArea, Path path, Charset explicitCharset) throws IOException {
+        // Read and decode completely before changing the editor or its encoding state.
+        TextFileIO.Decoded decoded = TextFileIO.read(path, explicitCharset);
+        displayDecodedFile(textArea, path, decoded, explicitCharset == null);
+    }
+
+    private void displayDecodedFile(JTextArea textArea, Path path, TextFileIO.Decoded decoded, boolean automatic) {
+        textArea.setText(decoded.text());
+        FileState state = fileState(textArea);
+        state.path = path;
+        state.charset = decoded.charset();
+        state.bom = decoded.bom();
+        state.automatic = automatic;
+        state.manual = !automatic;
         formatJson();
+        state.baselineText = textArea.getText();
+        updateEncodingDisplay();
     }
 
     private void codeChangeAction(){
@@ -1390,29 +1508,38 @@ public class MainView extends FrameView {
     }
 
     private void saveFileAction(JTextArea textArea) {
- //       JFileChooser open = new JFileChooser();
+        if (textArea == null) return;
+        FileState state = fileState(textArea);
         String title = resourceMap.getString("closeDlg.text");
         java.awt.FileDialog closeDlg = new java.awt.FileDialog(getFrame(), title, java.awt.FileDialog.SAVE);
-        closeDlg.setVisible(true);
-        File file = new File(closeDlg.getDirectory(),closeDlg.getFile());
-        if(file==null||file.getPath().length()==0) return;
-        BufferedWriter write= null;
-        StringBuilder sb = new StringBuilder();
+        if (state.path != null) {
+            closeDlg.setDirectory(state.path.toAbsolutePath().getParent().toString());
+            closeDlg.setFile(state.path.getFileName().toString());
+        }
+        Path path = null;
         try {
-            OutputStreamWriter osw = new OutputStreamWriter(new FileOutputStream(file),"GBK");
-            write = new BufferedWriter(osw);
-            String text = StringUtils.replace(textArea.getText(), "\n", "\r\n");
-            write.write(text, 0, text.length());
-            write.close();
-        } catch (IOException e) {
-
+            closeDlg.setVisible(true);
+            path = TextFileIO.selectedPath(closeDlg.getDirectory(), closeDlg.getFile());
+            if (path == null) return;
+            boolean overwrite = Files.exists(path);
+            if (overwrite && JOptionPane.showConfirmDialog(getFrame(), "文件已存在，是否覆盖？\n" + path,
+                    "确认覆盖", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
+            TextFileIO.writeAtomic(path, textArea.getText(), state.charset, state.bom, overwrite);
+            state.path = path;
+            state.bom = state.bom && state.charset.equals(TextFileIO.UTF8);
+            state.baselineText = textArea.getText();
+            updateEncodingDisplay();
+        } catch (CharacterCodingException ex) {
+            showMessageDialog("保存失败", path + "\n当前内容无法无损编码为 " + state.charset.name()
+                + "。请切换为 UTF-8，或检查文本中是否存在无效字符。原文件未替换。");
+        } catch (AtomicMoveNotSupportedException ex) {
+            showMessageDialog("保存失败", path + "\n目标文件系统不支持原子替换，请选择其他保存位置。原文件未替换。");
+        } catch (FileAlreadyExistsException ex) {
+            showMessageDialog("保存失败", path + "\n保存期间出现了同名文件，未进行覆盖。请重新保存并确认是否覆盖。");
+        } catch (IOException | IllegalArgumentException ex) {
+            showMessageDialog("保存失败", (path == null ? "" : path + "\n") + ex.getMessage());
         } finally {
-            if (write != null) {
-                try {
-                    write.close();
-                } catch (IOException e1) {
-                }
-            }
+            closeDlg.dispose();
         }
     }
 }
