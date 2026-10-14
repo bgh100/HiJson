@@ -6,20 +6,26 @@ JSON作为一种数据交换格式越来越多地被用于web开发中，并在�
 
 HiJson使用java开发，基于gson包，格式化json字符并以树的形式展示，支持各种常用操作，支持多标签！
 
-
-
-## Requirement
-
-* NetBeans IDE 8
-* JDK 1.7 or higher
-
-
-
-
-## About
+基于 [HiJson](https://code.google.com/p/json-view/) by [藏言(Cangyan)](mailto:beetle082@163.com) 二次开发。
 
 License: [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
 
-Author: [藏言(Cangyan)](mailto:beetle082@163.com)
+## Requirement
 
-Website: [HiJson](https://code.google.com/p/json-view/)
+* JDK 21 or higher
+* NetBeans / IntelliJ IDEA, or Apache Ant 1.10.x for command-line builds
+
+## Dependencies
+
+All dependency JARs belong in `lib/`. IntelliJ IDEA loads this directory;
+the Ant classpath is listed in `nbproject/project.properties`.
+
+
+build and run:
+```shell
+ant jar
+java -jar dist/HiJson.jar
+```
+
+Keep `dist/lib/` beside `dist/HiJson.jar` when distributing this build.
+

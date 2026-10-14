@@ -10,6 +10,35 @@
 <project name="HiJson" default="default" basedir=".">
     <description>Builds, tests, and runs the project HiJson.</description>
     <import file="nbproject/build-impl.xml"/>
+    <!-- Use the JDK running Ant instead of a machine-specific NetBeans JDK 7 registration. -->
+    <target name="-pre-init">
+        <property name="platform.home" location="${java.home}"/>
+        <property name="platform.bootcp" value=""/>
+        <property name="platform.compiler" value="modern"/>
+        <property name="platform.java" location="${java.home}/bin/java"/>
+        <property name="platform.javac" location="${java.home}/bin/javac"/>
+        <property name="platform.javadoc" location="${java.home}/bin/javadoc"/>
+    </target>
+
+    <!-- Copy dependencies without requiring NetBeans' private CopyLibs Ant task. -->
+    <target name="-post-jar">
+        <mkdir dir="${dist.dir}/lib"/>
+        <copy todir="${dist.dir}/lib" flatten="true">
+            <path path="${javac.classpath}"/>
+        </copy>
+        <pathconvert property="distribution.classpath" pathsep=" ">
+            <path path="${javac.classpath}"/>
+            <chainedmapper>
+                <flattenmapper/>
+                <globmapper from="*" to="lib/*"/>
+            </chainedmapper>
+        </pathconvert>
+        <jar destfile="${dist.jar}" update="true">
+            <manifest>
+                <attribute name="Class-Path" value="${distribution.classpath}"/>
+            </manifest>
+        </jar>
+    </target>
     <!--
 
     There exist several targets which are by default empty and which can be 

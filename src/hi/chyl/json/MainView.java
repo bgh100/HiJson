@@ -1,7 +1,5 @@
 package hi.chyl.json;
 
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.serializer.SerializerFeature;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
@@ -75,8 +73,8 @@ import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
-import org.apache.commons.lang.StringEscapeUtils;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.fife.ui.rsyntaxtextarea.SyntaxScheme;
@@ -609,11 +607,7 @@ public class MainView extends FrameView {
         JTextArea ta = getTextArea();
         String text = ta.getText();
         try {
-            JsonParser parser = new JsonParser();
-            
-            Object obj = JSON.parse(text);
-            text = JSON.toJSONString(obj,SerializerFeature.WriteMapNullValue);
-            jsonEle =  parser.parse(text);
+            jsonEle = JsonParser.parseString(text);
             if(jsonEle!=null && !jsonEle.isJsonNull()){
                 GsonBuilder gb = new GsonBuilder();
                 gb.setPrettyPrinting();
@@ -621,7 +615,6 @@ public class MainView extends FrameView {
                 Gson gson = gb.create();
                 String jsonStr = gson.toJson(jsonEle);
                 if(jsonStr!=null){
-                    jsonStr = StringEscapeUtils.unescapeJava(jsonStr);
                     ta.setText(jsonStr);
                 }
             }else{
