@@ -531,10 +531,10 @@ public class MainView extends FrameView {
             public void componentHidden(ComponentEvent e) {}
         });
         
-        JTree tree = newTree();
+        JTable table = newTable();
+        JTree tree = newTree(textArea, table);
 
         rightSplitPane.setLeftComponent(new JScrollPane(tree));
-        JTable table = newTable();
         rightSplitPane.setRightComponent(new JScrollPane(table));
 
         splitPane.setRightComponent(rightSplitPane);
@@ -571,19 +571,46 @@ public class MainView extends FrameView {
         return textArea;
     }
 
-    private JTree newTree(){
+    private JTree newTree(JTextArea editor, JTable table){
         DefaultMutableTreeNode root = new DefaultMutableTreeNode("o-JSON");
         DefaultTreeModel model = new DefaultTreeModel(root);
         JTree tree = new JTree(model);
+        tree.putClientProperty("hijson.editor", editor);
         tree.addTreeSelectionListener(new javax.swing.event.TreeSelectionListener() {
             public void valueChanged(javax.swing.event.TreeSelectionEvent evt) {
-                treeSelection(getTree(),getTable());
+                treeSelection(tree, table);
+                navigateTreeSelection(tree);
             }
         });
         setNodeIcon(tree);
         tree.addMouseListener(new TreeMouseListener(tree));
         System.out.println("New HashCode : " + tree.hashCode());
         return tree;
+    }
+
+    private void navigateTreeSelection(JTree tree) {
+        JTextArea editor = (JTextArea) tree.getClientProperty("hijson.editor");
+        JsonSourceIndex index = (JsonSourceIndex) tree.getClientProperty("hijson.sourceIndex");
+        if (editor == null || index == null) return;
+        DefaultMutableTreeNode node = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
+        if (node == null) return;
+        JsonSourceIndex.Range range = index.locate(node, editor.getText());
+        if (range == null) {
+            tree.setToolTipText("当前文本已修改或尚未完成，请格式化后更新树节点。");
+            return;
+        }
+        tree.setToolTipText(null);
+        if (editor instanceof RSyntaxTextArea syntaxEditor) {
+            syntaxEditor.getFoldManager().ensureOffsetNotInClosedFold(range.start());
+        }
+        editor.select(range.start(), range.end());
+        editor.getCaret().setSelectionVisible(true);
+        try {
+            var position = editor.modelToView2D(range.start());
+            if (position != null) editor.scrollRectToVisible(position.getBounds());
+        } catch (javax.swing.text.BadLocationException ex) {
+            // A view can be rebuilding while a tab is being displayed.
+        }
     }
 
     private JTable newTable(){
@@ -733,6 +760,7 @@ public class MainView extends FrameView {
         DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
         try {
             createJsonTree(jsonEle, root);
+            tree.putClientProperty("hijson.sourceIndex", new JsonSourceIndex(jsonEle, root));
             model.setRoot(root);
             setNodeIcon(tree);
         } catch (Exception ex) {
@@ -1173,6 +1201,7 @@ public class MainView extends FrameView {
             TreePath path = tree.getPathForLocation(e.getX(), e.getY());
             if (path == null)  return;
             tree.setSelectionPath(path);
+            navigateTreeSelection(tree);
             DefaultMutableTreeNode selNode = (DefaultMutableTreeNode) tree.getLastSelectedPathComponent();
             if (e.isPopupTrigger()) {
                 JPopupMenu popMenu = new JPopupMenu();
