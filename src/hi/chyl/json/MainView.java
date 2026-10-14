@@ -63,6 +63,7 @@ import javax.swing.JToolBar;
 import javax.swing.JTree;
 import javax.swing.JViewport;
 import javax.swing.KeyStroke;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumn;
@@ -499,6 +500,12 @@ public class MainView extends FrameView {
         tm.setColumnCount(2);
         tm.setColumnIdentifiers(col);
         JTable table = new JTable(tm);
+        table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            {
+                // JSON names and values are text, even when they start with <html>.
+                putClientProperty("html.disable", Boolean.TRUE);
+            }
+        });
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         table.setAutoscrolls(true);
         table.setMinimumSize(new Dimension(160, 100));
@@ -748,6 +755,10 @@ public class MainView extends FrameView {
 
     private void setNodeIcon(JTree tree){
         tree.setCellRenderer(new DefaultTreeCellRenderer() {
+            {
+                // Disable HTML before the first untrusted node text is assigned.
+                putClientProperty("html.disable", Boolean.TRUE);
+            }
             @Override
             public Component getTreeCellRendererComponent(JTree tree, Object value, boolean sel, boolean expanded, boolean leaf,int row, boolean hasFocus) {
                   super.getTreeCellRendererComponent(tree, value, sel, expanded,leaf, row, hasFocus);
